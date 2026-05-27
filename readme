@@ -1,0 +1,259 @@
+# proposalGen 执行说明
+
+`proposalGen` 用于从餐厅名称开始，依次完成公开菜单分析、莲藕合作菜品机会诊断、菜品概念图生成，并基于 `examples/sample.pptx` 生成合作提案 PPT。
+
+推荐从项目根目录执行所有命令：
+
+```powershell
+cd D:\workspace\ppt-master-main\ppt-master-main
+```
+
+## 0. 环境准备
+
+先确认 `.env` 已配置文本模型和图片模型。真实 `.env` 不要提交或打包给外部。
+
+文本分析相关：
+
+```env
+OPENAI_BASE_URL=你的文本模型服务地址
+OPENAI_API_KEY=你的 API Key
+OPENAI_TEXT_MODEL=你的文本模型
+```
+
+图片生成相关：
+
+```env
+IMAGE_BACKEND=openai
+OPENAI_MODEL=你的图片生成模型
+IMAGE_CONCURRENCY=1
+```
+
+安装依赖：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+后续命令如果没有启用虚拟环境，可以把 `python` 替换成 `.\.venv\Scripts\python.exe`。
+
+## 1. 分析餐厅公开菜单
+
+脚本：
+
+```text
+proposalGen/restaurant_menu_analyzer.py
+```
+
+作用：
+
+根据餐厅名称搜索公开网页资料，抓取来源页面，调用文本大模型整理出结构化菜单，并补充菜品图片候选。
+
+输入：
+
+- 餐厅名称，例如 `费大厨`、`西贝`
+- `.env` 中的 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_TEXT_MODEL`
+
+推荐命令：
+
+```powershell
+python -B proposalGen/restaurant_menu_analyzer.py "费大厨"
+```
+
+如果想指定输出目录：
+
+```powershell
+python -B proposalGen/restaurant_menu_analyzer.py "费大厨" -o projects\menu_research\费大厨_demo
+```
+
+常用参数：
+
+- `-o, --output-dir`：指定结果目录。默认是 `projects/menu_research/<餐厅名>_<时间戳>`。
+- `--model`：临时覆盖 `.env` 中的 `OPENAI_TEXT_MODEL`。
+- `--base-url`：临时覆盖 `.env` 中的 `OPENAI_BASE_URL`。
+- `--max-sources`：最多抓取多少个来源页面，默认 `14`。
+- `--download-photos`：下载菜品图片候选到本地。
+
+输出：
+
+```text
+projects/menu_research/<餐厅名>_<时间戳>/
+  structured_menu.json
+  structured_menu.md
+  sources.json
+```
+
+下一步使用 `structured_menu.json`。
+
+## 2. 分析莲藕合作菜品机会
+
+脚本：
+
+```text
+proposalGen/lotus_root_opportunity_analyzer.py
+```
+
+作用：
+
+读取第一步生成的结构化菜单，调用文本大模型分析哪些现有菜品适合做莲藕方向改造，输出合作菜品名称、价格、口味、制作方法和推荐理由。
+
+输入：
+
+- 第一步生成的 `structured_menu.json`
+- `.env` 中的文本模型配置
+
+推荐命令：
+
+```powershell
+python -B proposalGen/lotus_root_opportunity_analyzer.py projects\menu_research\费大厨_demo\structured_menu.json
+```
+
+常用参数：
+
+- `-o, --output-dir`：指定输出目录。默认写回 `structured_menu.json` 所在目录。
+- `--max-opportunities`：最多生成多少条机会菜品，默认 `18`。
+- `--allow-estimated-prices`：允许模型在缺少真实价格时给估算价。默认不编造价格。
+- `--model`：临时覆盖文本模型。
+- `--base-url`：临时覆盖文本模型地址。
+
+输出：
+
+```text
+projects/menu_research/<运行目录>/
+  lotus_root_opportunities.json
+  lotus_root_opportunities.md
+```
+
+下一步使用 `lotus_root_opportunities.json`。
+
+## 3. 生成合作菜品图片
+
+脚本：
+
+```text
+proposalGen/lotus_root_image_generator.py
+```
+
+作用：
+
+把第二步的合作菜品机会转换成图片生成提示词，调用 `skills/ppt-master/scripts/image_gen.py` 生成菜品概念图，并把生成图片路径写回 `lotus_root_opportunities.json`。
+
+输入：
+
+- 第二步生成的 `lotus_root_opportunities.json`
+- 可选：同目录下的 `structured_menu.json`，用于参考原菜单菜品图片
+- `.env` 中的图片模型配置
+
+推荐命令：
+
+```powershell
+python -B proposalGen/lotus_root_image_generator.py projects\menu_research\费大厨_demo\lotus_root_opportunities.json --menu-json projects\menu_research\费大厨_demo\structured_menu.json --concurrency 1
+```
+
+常用参数：
+
+- `--menu-json`：指定 `structured_menu.json`，用于增强提示词和匹配原菜品图片。
+- `--images-dir`：指定图片输出目录。默认是 `<运行目录>/generated_lotus_images`。
+- `--aspect-ratio`：图片比例，默认 `4:3`。
+- `--image-size`：图片尺寸，默认 `1K`。
+- `--backend`：临时覆盖 `IMAGE_BACKEND`。
+- `--model`：临时覆盖图片模型。
+- `--concurrency`：图片并发数，默认 `1`。
+- `--max-items`：只生成前 N 个菜品，调试时有用。
+- `--dry-run`：只生成提示词清单，不调用图片模型。
+- `--force`：已有图片时也重新生成。
+
+输出：
+
+```text
+projects/menu_research/<运行目录>/
+  lotus_root_opportunities.json
+  generated_lotus_images/
+    lotus_image_prompts.json
+    lotus_image_prompts.md
+    <生成的菜品图片>
+```
+
+下一步继续使用更新后的 `lotus_root_opportunities.json`。
+
+## 4. 生成合作提案 PPT
+
+脚本：
+
+```text
+proposalGen/create_restaurant_coop_ppt.py
+```
+
+作用：
+
+复制并复用 `examples/sample.pptx` 的原始风格和结构，替换首页、目录及第 6 页以后的内容，生成餐厅合作菜品推荐提案。
+
+输入：
+
+- 项目目录，目录内至少需要：
+  - `lotus_root_opportunities.json`
+  - `structured_menu.json`
+  - `generated_lotus_images/`
+- PPT 模板：默认 `examples/sample.pptx`
+
+推荐命令：
+
+```powershell
+python -B proposalGen/create_restaurant_coop_ppt.py --project-dir projects\menu_research\费大厨_demo --restaurant-name "费大厨"
+```
+
+为其他餐厅生成时，只需要换目录和餐厅名：
+
+```powershell
+python -B proposalGen/create_restaurant_coop_ppt.py --project-dir projects\menu_research\西贝_demo --restaurant-name "西贝"
+```
+
+常用参数：
+
+- `--project-dir`：本次菜单分析项目目录。强烈建议显式传入。
+- `--restaurant-name`：餐厅名称。强烈建议显式传入，避免使用历史默认值。
+- `--template`：PPT 模板路径，默认 `examples/sample.pptx`。
+- `--output`：输出 PPTX 文件名。默认 `<餐厅名>_lotus_coop_dish_proposal.pptx`。
+- `--cover-dish-name`：指定首页主视觉使用哪道合作菜品。
+
+输出：
+
+```text
+projects/menu_research/<运行目录>/
+  <餐厅名>_lotus_coop_dish_proposal.pptx
+```
+
+## 5. 兼容入口
+
+脚本：
+
+```text
+proposalGen/create_feidachu_coop_ppt.py
+```
+
+这是旧文件名兼容入口，内部会调用 `create_restaurant_coop_ppt.py`。新项目建议直接使用：
+
+```powershell
+python -B proposalGen/create_restaurant_coop_ppt.py --project-dir <运行目录> --restaurant-name "<餐厅名>"
+```
+
+## 完整示例
+
+下面以 `费大厨` 为例，使用固定目录，方便后续命令衔接：
+
+```powershell
+$RUN_DIR = "projects\menu_research\费大厨_demo"
+
+python -B proposalGen/restaurant_menu_analyzer.py "费大厨" -o $RUN_DIR
+python -B proposalGen/lotus_root_opportunity_analyzer.py "$RUN_DIR\structured_menu.json"
+python -B proposalGen/lotus_root_image_generator.py "$RUN_DIR\lotus_root_opportunities.json" --menu-json "$RUN_DIR\structured_menu.json" --concurrency 1
+python -B proposalGen/create_restaurant_coop_ppt.py --project-dir $RUN_DIR --restaurant-name "费大厨"
+```
+
+## 排错提示
+
+- 搜索失败或 DuckDuckGo 超时：通常是网络问题，可以重试，或增加可访问的来源页面后再运行。
+- 图片生成失败：先检查 `.env` 中 `IMAGE_BACKEND`、图片模型名、`OPENAI_API_KEY`、`OPENAI_BASE_URL` 是否正确。
+- PPT 生成报 `lotus_root_opportunities.json should contain at least 17 opportunity items`：第二步生成的机会菜品不足，重新运行第二步并调大 `--max-opportunities`。
+- PPT 文件被 PowerPoint 打开时保存失败：脚本会自动生成带时间戳的备用文件名；也可以关闭 PPT 后重跑。
+- 换餐厅生成时：必须重新跑第 1 到第 3 步，并在第 4 步传入新的 `--project-dir` 和 `--restaurant-name`。
